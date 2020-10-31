@@ -7,9 +7,7 @@ import time
 from multiprocessing import freeze_support, current_process, Process
 import random
 
-# # Define custom modules directory for project
-sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), 'custom_modules')))
-# # Import custom modules
+# Import custom modules
 import scapy.all as scapy
 
 
